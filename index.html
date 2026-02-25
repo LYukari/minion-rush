@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minion Rush: The Nose is Coming!</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+
+        <!-- UI Overlay -->
+        <div id="ui-overlay">
+            <div id="score-container">
+                <span id="score-label">SCORE</span>
+                <span id="score-value">00000</span>
+            </div>
+
+            <div id="speed-meter">
+                <div id="speed-bar"></div>
+            </div>
+
+            <div id="powerup-status" class="hidden">
+                <span id="powerup-name">POWER-UP!</span>
+                <div id="powerup-timer-bar"></div>
+            </div>
+
+            <div id="warning-message" class="hidden">
+                CUIDADO! O NARIZ ESTÁ CHEGANDO!
+            </div>
+        </div>
+
+        <!-- Menu Inicial -->
+        <div id="start-menu" class="overlay">
+            <h1>MINION RUSH</h1>
+            <h2 class="subtitle">The Nose is Coming!</h2>
+            <div class="nose-warning">FUJA DO NARIZ DO GRU!</div>
+            <button id="start-button">INICIAR CORRIDA</button>
+            <div class="controls-hint">
+                <p>Use <b>W A S D</b> ou <b>SETAS</b> para mover, pular e deslizar</p>
+            </div>
+        </div>
+
+        <!-- Game Over -->
+        <div id="game-over" class="overlay hidden">
+            <h1>GAME OVER</h1>
+            <div class="final-score">PONTUAÇÃO FINAL: <span id="final-score-value">0</span></div>
+            <button id="restart-button">TENTAR NOVAMENTE</button>
+        </div>
+    </div>
+    <script type="module" src="./main.js"></script>
+</body>
+
+</html>
