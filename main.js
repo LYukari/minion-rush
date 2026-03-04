@@ -2,8 +2,8 @@ import * as THREE from 'three';
 
 // --- CONFIGURAÇÃO INICIAL ---
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0a);
-scene.fog = new THREE.Fog(0x0a0a0a, 10, 60);
+scene.background = new THREE.Color(0x020617);
+scene.fog = new THREE.Fog(0x020617, 10, 80);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 4, 8);
@@ -22,10 +22,34 @@ let score = 0;
 let speed = 0.2;
 const LANES = [-2, 0, 2];
 let currentLane = 1;
+let selectedSkin = 'default';
 let isJumping = false;
 let isSliding = false;
 let jumpVelocity = 0;
 const gravity = -0.012;
+
+// --- ÁUDIO (SoundManager Sintético) ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSound(freq, type, duration) {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+const sounds = {
+    jump: () => playSound(400, 'square', 0.1),
+    collect: () => { playSound(600, 'sine', 0.1); setTimeout(() => playSound(800, 'sine', 0.1), 50); },
+    powerup: () => { playSound(300, 'sawtooth', 0.3); playSound(500, 'sawtooth', 0.3); },
+    hit: () => playSound(100, 'sawtooth', 0.4),
+    button: () => playSound(440, 'sine', 0.1)
+};
 
 // --- POWER-UPS ---
 let activePowerup = null; // 'magnet', 'rocket', 'superjump'
@@ -40,6 +64,7 @@ const obstacles = [];
 const coins = [];
 const powerups = [];
 const floorSegments = [];
+const particles = [];
 
 // --- INICIALIZAÇÃO ---
 function init() {
@@ -59,46 +84,256 @@ function createLights() {
 }
 
 function createPlayer() {
+    // Remover player existente se houver
+    if (player) {
+        scene.remove(player);
+        player.children.length = 0; // Limpar children para evitar duplicação
+    }
+
     const group = new THREE.Group();
+
+    // Configurações de Skin
+    let bodyColor = 0xfde047;
+    let suitColor = 0x2563eb;
+    let isPurple = selectedSkin === 'purple';
+    let isPrisoner = selectedSkin === 'prisoner';
+    let isPrincess = selectedSkin === 'princess';
+
+    if (isPurple) {
+        bodyColor = 0x9333ea;
+        suitColor = 0x7c3aed;
+    } else if (isPrincess) {
+        suitColor = 0xf472b6;
+    }
+
     // Corpo
-    const body = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.4, 0.8, 4, 16),
-        new THREE.MeshStandardMaterial({ color: 0xfde047 })
-    );
+    const bodyGeo = new THREE.CapsuleGeometry(0.35, 0.7, 4, 16);
+    const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.4 });
+    const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.y = 0.7;
     group.add(body);
-    // Macacão
-    const suit = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.41, 0.41, 0.4, 16),
-        new THREE.MeshStandardMaterial({ color: 0x2563eb })
+
+    // Macacão/Roupa
+    if (isPrisoner) {
+        // Macacão Listrado (Segmentos)
+        for (let i = 0; i < 4; i++) {
+            const stripeMat = new THREE.MeshStandardMaterial({ color: i % 2 === 0 ? 0xffffff : 0x111111 });
+            const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 16), stripeMat);
+            stripe.position.y = 0.3 + i * 0.1;
+            group.add(stripe);
+        }
+    } else {
+        const suit = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.36, 0.36, 0.35, 16),
+            new THREE.MeshStandardMaterial({ color: suitColor })
+        );
+        suit.position.y = 0.45;
+        group.add(suit);
+    }
+
+    if (!isPurple && !isPrisoner && !isPrincess) {
+        const logo = new THREE.Mesh(new THREE.CircleGeometry(0.08, 16), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+        logo.position.set(0, 0.45, 0.37);
+        group.add(logo);
+    }
+
+    // Óculos
+    const frameColor = isPurple ? 0x444444 : 0x888888;
+    const goggleFrame = new THREE.Mesh(
+        new THREE.TorusGeometry(0.18, 0.05, 12, 32),
+        new THREE.MeshStandardMaterial({ color: frameColor, metalness: 0.8, roughness: 0.2 })
     );
-    suit.position.y = 0.4;
-    group.add(suit);
+    goggleFrame.position.set(0, 0.85, 0.28);
+    group.add(goggleFrame);
+
+    const eye = new THREE.Mesh(
+        new THREE.SphereGeometry(0.15, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xffffff })
+    );
+    eye.position.set(0, 0.85, 0.28);
+    group.add(eye);
+
+    const pupil = new THREE.Mesh(
+        new THREE.SphereGeometry(0.04, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0x000000 })
+    );
+    pupil.position.set(0, 0.85, 0.42);
+    group.add(pupil);
+
+    const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 20), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    strap.rotation.x = Math.PI / 2;
+    strap.position.y = 0.85;
+    group.add(strap);
+
+    // Expressão (Boca)
+    if (isPurple) {
+        // Boca Nervosa (Dentes)
+        const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.1), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+        mouth.position.set(0, 0.65, 0.32);
+        group.add(mouth);
+    } else {
+        const smileGeo = new THREE.TorusGeometry(0.1, 0.015, 8, 16, Math.PI);
+        const smile = new THREE.Mesh(smileGeo, new THREE.MeshStandardMaterial({ color: 0x422006 }));
+        smile.position.set(0, 0.65, 0.3);
+        smile.rotation.x = Math.PI;
+        group.add(smile);
+    }
+
+    // Cabelo
+    if (isPurple) {
+        // Cabelo Maluco
+        for (let i = 0; i < 15; i++) {
+            const hair = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.01, 0.4), new THREE.MeshStandardMaterial({ color: 0x9333ea }));
+            hair.position.set((Math.random() - 0.5) * 0.4, 1.1, (Math.random() - 0.5) * 0.4);
+            hair.rotation.set(Math.random(), Math.random(), Math.random());
+            group.add(hair);
+        }
+    } else {
+        const hairsCount = isPrisoner ? 2 : 5;
+        for (let i = -Math.floor(hairsCount / 2); i <= Math.floor(hairsCount / 2); i++) {
+            const hair = new THREE.Mesh(new THREE.CylinderGeometry(0.005, 0.005, 0.25), new THREE.MeshStandardMaterial({ color: 0x000000 }));
+            hair.position.set(i * 0.06, 1.15, 0);
+            hair.rotation.z = i * 0.15;
+            group.add(hair);
+        }
+    }
+
+    // Acessórios de Skin
+    if (isPrincess) {
+        // Coroa
+        const crownBase = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.05, 8, 16), new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1 }));
+        crownBase.rotation.x = Math.PI / 2;
+        crownBase.position.y = 1.15;
+        group.add(crownBase);
+        for (let i = 0; i < 5; i++) {
+            const point = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.15, 4), new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1 }));
+            const angle = (i / 5) * Math.PI * 2;
+            point.position.set(Math.cos(angle) * 0.2, 1.2, Math.sin(angle) * 0.2);
+            group.add(point);
+        }
+    }
+
+    // Braços
+    const armMat = new THREE.MeshStandardMaterial({ color: bodyColor });
+    const armGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.4);
+    const leftArm = new THREE.Mesh(armGeo, armMat);
+    leftArm.position.set(-0.4, 0.55, 0);
+    leftArm.rotation.z = 0.5;
+    group.add(leftArm);
+    const rightArm = new THREE.Mesh(armGeo, armMat);
+    rightArm.position.set(0.4, 0.55, 0);
+    rightArm.rotation.z = -0.5;
+    group.add(rightArm);
+
+    // Pernas
+    const blackMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const legGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.2);
+    const bootGeo = new THREE.BoxGeometry(0.15, 0.1, 0.25);
+    const leftLeg = new THREE.Mesh(legGeo, blackMat);
+    leftLeg.position.set(-0.15, 0.15, 0);
+    group.add(leftLeg);
+    const leftBoot = new THREE.Mesh(bootGeo, blackMat);
+    leftBoot.position.set(-0.15, 0.05, 0.05);
+    group.add(leftBoot);
+
+    const rightLeg = new THREE.Mesh(legGeo, blackMat);
+    rightLeg.position.set(0.15, 0.15, 0);
+    group.add(rightLeg);
+    const rightBoot = new THREE.Mesh(bootGeo, blackMat);
+    rightBoot.position.set(0.15, 0.05, 0.05);
+    group.add(rightBoot);
+
+    // Jetpack (Invisível por padrão)
+    const jetpackGroup = new THREE.Group();
+    const jpBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8 }));
+    jpBody.position.set(0, 0.6, -0.3);
+    jetpackGroup.add(jpBody);
+
+    for (let i of [-1, 1]) {
+        const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.5), new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 1 }));
+        thruster.position.set(i * 0.25, 0.6, -0.35);
+        jetpackGroup.add(thruster);
+
+        const flame = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.3, 8), new THREE.MeshStandardMaterial({ color: 0xff4500, emissive: 0xff4500, emissiveIntensity: 2 }));
+        flame.position.set(i * 0.25, 0.3, -0.35);
+        flame.rotation.x = Math.PI;
+        thruster.userData.flame = flame;
+        jetpackGroup.add(flame);
+    }
+    jetpackGroup.visible = false;
+    group.add(jetpackGroup);
 
     player = group;
+    player.jetpack = jetpackGroup; // Referência direta
+    // Store references to animated parts for easier access
+    player.leftArm = leftArm;
+    player.rightArm = rightArm;
+    player.leftLeg = leftLeg;
+    player.rightLeg = rightLeg;
+
     scene.add(player);
 }
 
 function createGru() {
     const group = new THREE.Group();
+
+    // Escala geral menor para o Gru
+    group.scale.set(0.75, 0.75, 0.75);
+
+    // Sobretudo com Gola
     const body = new THREE.Mesh(
-        new THREE.BoxGeometry(1.5, 3, 1),
-        new THREE.MeshStandardMaterial({ color: 0x333333 })
+        new THREE.CylinderGeometry(0.5, 0.85, 3, 16),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a })
     );
     body.position.y = 1.5;
     group.add(body);
 
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.5, 0.4, 16), new THREE.MeshStandardMaterial({ color: 0x0f172a }));
+    collar.position.y = 2.8;
+    group.add(collar);
+
+    // Cachecol Listrado Refinado
+    const scarf = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.56, 0.56, 0.35, 16),
+        new THREE.MeshStandardMaterial({ color: 0x334155 })
+    );
+    scarf.position.y = 2.7;
+    group.add(scarf);
+
+    for (let i = 0; i < 4; i++) {
+        const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.57, 0.57, 0.05), new THREE.MeshStandardMaterial({ color: 0x64748b }));
+        stripe.position.y = 2.6 + i * 0.08;
+        group.add(stripe);
+    }
+
+    // Cabeça Oval
+    const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.42, 16, 20),
+        new THREE.MeshStandardMaterial({ color: 0xccaa99 })
+    );
+    head.scale.y = 1.2;
+    head.position.y = 3.2;
+    group.add(head);
+
+    // Nariz Grande e Fino
     const nose = new THREE.Mesh(
-        new THREE.ConeGeometry(0.15, 8, 12),
+        new THREE.ConeGeometry(0.12, 10, 16),
         new THREE.MeshStandardMaterial({ color: 0xccaa99 })
     );
     nose.rotation.x = Math.PI / 2;
-    nose.position.set(0, 2.2, -4);
+    nose.position.set(0, 3.2, -5);
     gruNose = nose;
     group.add(nose);
 
+    // Braços Longos
+    const armGeo = new THREE.CylinderGeometry(0.08, 0.12, 1.8);
+    const lA = new THREE.Mesh(armGeo, new THREE.MeshStandardMaterial({ color: 0x0f172a }));
+    lA.position.set(-0.7, 2, 0.2); lA.rotation.z = 0.3; group.add(lA);
+    const rA = new THREE.Mesh(armGeo, new THREE.MeshStandardMaterial({ color: 0x0f172a }));
+    rA.position.set(0.7, 2, 0.2); rA.rotation.z = -0.3; group.add(rA);
+
     gru = group;
-    gru.position.set(0, 0, 8);
+    gru.position.set(0, 0, 7);
     scene.add(gru);
 }
 
@@ -107,17 +342,50 @@ function createEnvironment() {
 }
 
 function addFloorSegment(z) {
+    const group = new THREE.Group();
+
+    // Pista (Asfalto Tech)
     const seg = new THREE.Mesh(
         new THREE.PlaneGeometry(10, 20),
-        new THREE.MeshStandardMaterial({ color: 0x111111 })
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8 })
     );
     seg.rotation.x = -Math.PI / 2;
-    seg.position.z = z;
-    const grid = new THREE.GridHelper(10, 10, 0x00ffff, 0x222222);
+    group.add(seg);
+
+    const grid = new THREE.GridHelper(10, 20, 0x3b82f6, 0x1e293b);
     grid.rotation.x = Math.PI / 2;
     seg.add(grid);
-    scene.add(seg);
-    floorSegments.push(seg);
+
+    // Prédios de Alturas Diferentes
+    for (let side of [-1, 1]) {
+        for (let j = 0; j < 2; j++) {
+            const h = 5 + Math.random() * 20;
+            const buildGeo = new THREE.BoxGeometry(4, h, 8);
+            const buildMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+            const build = new THREE.Mesh(buildGeo, buildMat);
+            build.position.set(side * 8, h / 2, (j - 0.5) * 10);
+            group.add(build);
+
+            // Luzes Neon nas janelas
+            for (let k = 0; k < h / 2; k++) {
+                const win = new THREE.Mesh(
+                    new THREE.PlaneGeometry(0.4, 0.4),
+                    new THREE.MeshStandardMaterial({
+                        color: Math.random() > 0.5 ? 0x00ffff : 0xfde047,
+                        emissive: Math.random() > 0.5 ? 0x00ffff : 0xfde047,
+                        emissiveIntensity: 2
+                    })
+                );
+                win.position.set(side * 5.9, 1 + k * 2, (j - 0.5) * 10 + (Math.random() - 0.5) * 6);
+                win.rotation.y = -side * Math.PI / 2;
+                group.add(win);
+            }
+        }
+    }
+
+    group.position.z = z;
+    scene.add(group);
+    floorSegments.push(group);
 }
 
 // --- SPAWNERS ---
@@ -125,36 +393,154 @@ function spawnItem() {
     const lane = LANES[Math.floor(Math.random() * 3)];
     const rand = Math.random();
 
-    if (rand < 0.6) { // Moeda
-        const coin = new THREE.Mesh(
-            new THREE.TorusGeometry(0.3, 0.05, 8, 16),
-            new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8, roughness: 0.2 })
-        );
-        coin.position.set(lane, 0.7, -80);
-        scene.add(coin);
-        coins.push(coin);
-    } else if (rand < 0.8) { // Obstáculo
-        const type = Math.random() > 0.5 ? 'low' : 'high';
-        const obs = new THREE.Mesh(
-            new THREE.BoxGeometry(1.5, type === 'low' ? 0.8 : 3, 1),
-            new THREE.MeshStandardMaterial({ color: type === 'low' ? 0xef4444 : 0x10b981 })
-        );
-        obs.position.set(lane, type === 'low' ? 0.4 : 1.5, -80);
-        obs.userData = { type };
-        scene.add(obs);
-        obstacles.push(obs);
+    if (rand < 0.6) { // Banana Orgânica Procedural
+        const bananaGroup = new THREE.Group();
+
+        // Criar a curva da espinha da banana
+        const points = [];
+        for (let i = 0; i <= 8; i++) {
+            const t = i / 8;
+            const angle = (t - 0.5) * 2.2;
+            const radius = 0.5;
+            points.push(new THREE.Vector3(
+                Math.cos(angle) * radius - radius,
+                Math.sin(angle) * radius,
+                0
+            ));
+        }
+        const curve = new THREE.CatmullRomCurve3(points);
+
+        // TubeGeometry cria um corpo contínuo com "quinas" (6 lados) como uma banana real
+        const geometry = new THREE.TubeGeometry(curve, 12, 0.09, 6, false);
+        const material = new THREE.MeshStandardMaterial({
+            color: 0xffe135,
+            roughness: 0.4,
+            metalness: 0.1
+        });
+        const body = new THREE.Mesh(geometry, material);
+        bananaGroup.add(body);
+
+        // Ponta de Maturação (Preta)
+        const tipGeo = new THREE.SphereGeometry(0.09, 8, 8);
+        const tipMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+        const tip = new THREE.Mesh(tipGeo, tipMat);
+        tip.position.copy(points[0]);
+        bananaGroup.add(tip);
+
+        // Cabo (Marrom)
+        const stemGeo = new THREE.CylinderGeometry(0.03, 0.05, 0.2, 6);
+        const stemMat = new THREE.MeshStandardMaterial({ color: 0x4a3728 });
+        const stem = new THREE.Mesh(stemGeo, stemMat);
+        stem.position.copy(points[points.length - 1]);
+        stem.position.y += 0.05;
+        stem.rotation.z = -0.6;
+        bananaGroup.add(stem);
+
+        bananaGroup.scale.set(1.5, 1.5, 1.5);
+        bananaGroup.position.set(lane, 0.8, -80);
+        scene.add(bananaGroup);
+        coins.push(bananaGroup);
+    } else if (rand < 0.8) { // Obstáculos Premium
+        const lane = LANES[Math.floor(Math.random() * 3)];
+        const subRand = Math.random();
+        const obsGroup = new THREE.Group();
+        let type = 'low';
+
+        if (subRand < 0.4) { // Barreira de Alerta
+            type = 'low';
+            const base = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.2, 0.5), new THREE.MeshStandardMaterial({ color: 0x334155 }));
+            const sign = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.8, 0.1), new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.5 }));
+            sign.position.y = 0.5;
+            obsGroup.add(base, sign);
+            obsGroup.position.y = 0.1;
+        } else if (subRand < 0.7) { // Arma de Peido Volumétrica Animada
+            type = 'low';
+            const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.45, 1.8), new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8 }));
+            barrel.rotation.z = Math.PI / 2;
+            const tank = new THREE.Mesh(new THREE.SphereGeometry(0.55), new THREE.MeshStandardMaterial({ color: 0x1e293b }));
+            tank.position.x = -1; barrel.add(tank);
+
+            const smokeGroup = new THREE.Group();
+            for (let i = 0; i < 5; i++) {
+                const fart = new THREE.Mesh(new THREE.SphereGeometry(0.35 + Math.random() * 0.2), new THREE.MeshStandardMaterial({ color: 0x84cc16, transparent: true, opacity: 0.5 }));
+                fart.position.set(0.8 + i * 0.4, (Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.4);
+                smokeGroup.add(fart);
+            }
+            obsGroup.add(smokeGroup);
+            obsGroup.add(barrel);
+            obsGroup.position.y = 0.5;
+            obsGroup.userData.isFartGun = true;
+            obsGroup.userData.smokeGroup = smokeGroup;
+            obsGroup.userData.barrel = barrel;
+        } else { // Dr. Nefário com Super Scooter
+            type = 'high';
+            const scooter = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.85, 0.4, 16), new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7 }));
+            scooter.position.y = -0.5;
+            const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x60a5fa }));
+            thruster.position.y = -0.2; scooter.add(thruster);
+
+            const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5), new THREE.MeshStandardMaterial({ color: 0xf8fafc }));
+            const head = new THREE.Mesh(new THREE.SphereGeometry(0.35), new THREE.MeshStandardMaterial({ color: 0xddbb99 }));
+            head.position.y = 1.0;
+            const glasses = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            glasses.position.set(0, 1.0, 0.25);
+
+            obsGroup.add(scooter, coat, head, glasses);
+            obsGroup.position.y = 1.0;
+            obsGroup.userData.isNefario = true;
+            obsGroup.userData.baseX = lane;
+            obsGroup.userData.offset = Math.random() * Math.PI * 2;
+        }
+
+        obsGroup.position.set(lane, obsGroup.position.y, -80);
+        obsGroup.userData.type = type;
+        scene.add(obsGroup);
+        obstacles.push(obsGroup);
     } else if (rand < 0.85) { // Power-up
         const types = ['magnet', 'rocket', 'superjump'];
         const type = types[Math.floor(Math.random() * types.length)];
-        const pu = new THREE.Mesh(
-            new THREE.OctahedronGeometry(0.5),
-            new THREE.MeshStandardMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 0.5 })
-        );
-        pu.position.set(lane, 0.8, -80);
-        pu.userData = { type };
-        scene.add(pu);
-        powerups.push(pu);
+        const puGroup = new THREE.Group();
+
+        let model;
+        if (type === 'magnet') {
+            model = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.1, 8, 12, Math.PI), new THREE.MeshStandardMaterial({ color: 0xff0000 }));
+            model.rotation.x = Math.PI;
+        } else if (type === 'rocket') {
+            model = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.2, 0.8), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
+            const tip = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.3), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+            tip.position.y = 0.5;
+            model.add(tip);
+        } else {
+            model = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.05, 8, 12), new THREE.MeshStandardMaterial({ color: 0x00ff00 }));
+            const core = new THREE.Mesh(new THREE.SphereGeometry(0.15), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+            model.add(core);
+        }
+
+        puGroup.add(model);
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2 }));
+        puGroup.add(glow);
+
+        puGroup.position.set(lane, 0.8, -80);
+        puGroup.userData = { type };
+        scene.add(puGroup);
+        powerups.push(puGroup);
     }
+}
+
+function createDust() {
+    if (!gameActive || isJumping || isSliding || activePowerup === 'rocket') return;
+
+    const pGeo = new THREE.SphereGeometry(0.1, 4, 4);
+    const pMat = new THREE.MeshStandardMaterial({ color: 0x888888, transparent: true, opacity: 0.6 });
+    const p = new THREE.Mesh(pGeo, pMat);
+
+    p.position.set(player.position.x + (Math.random() - 0.5) * 0.5, 0.1, player.position.z + 0.5);
+    scene.add(p);
+    particles.push({
+        mesh: p,
+        life: 1.0,
+        vel: new THREE.Vector3((Math.random() - 0.5) * 0.05, Math.random() * 0.05, 0.1)
+    });
 }
 
 // --- GAME LOOP ---
@@ -163,8 +549,10 @@ function update() {
 
     score += 1;
     document.getElementById('score-value').innerText = score.toString().padStart(5, '0');
-    speed += 0.00002;
-    document.getElementById('speed-bar').style.width = `${Math.min((speed - 0.2) * 500, 100)}%`;
+
+    // Dificuldade Progressiva (Velocidade aumenta mais rápido)
+    speed += 0.00005;
+    document.getElementById('speed-bar').style.width = `${Math.min((speed - 0.2) * 200, 100)}%`;
 
     // Movimento Lateral
     player.position.x = THREE.MathUtils.lerp(player.position.x, LANES[currentLane], 0.15);
@@ -173,10 +561,76 @@ function update() {
     handlePhysics();
     handleItems();
 
-    // Gru perseguindo
-    gru.position.z = THREE.MathUtils.lerp(gru.position.z, 6 + (Math.sin(Date.now() * 0.001) * 0.5), 0.01);
+    // Animação de Corrida (Braços e Pernas)
+    if (gameActive && !isJumping && !isSliding && activePowerup !== 'rocket') {
+        const time = Date.now() * 0.01;
+        const moveAmount = Math.sin(time) * 0.5;
+        if (player.leftArm && player.rightArm && player.leftLeg && player.rightLeg) {
+            player.leftArm.rotation.x = moveAmount;
+            player.rightArm.rotation.x = -moveAmount;
+            player.leftLeg.rotation.x = -moveAmount;
+            player.rightLeg.rotation.x = moveAmount;
+        }
+    }
 
-    if (Math.random() < 0.05) spawnItem();
+    // Gru perseguindo (Agora bem perto!)
+    const gruTargetZ = 7 + (Math.sin(Date.now() * 0.002) * 0.8);
+    gru.position.z = THREE.MathUtils.lerp(gru.position.z, gruTargetZ, 0.02);
+    gruNose.scale.set(1 + Math.sin(Date.now() * 0.01) * 0.1, 1, 1);
+
+    // Aviso do Nariz (Ativo se estiver quase tocando)
+    const warning = document.getElementById('warning-message');
+    if (gru.position.z < 5) {
+        warning.classList.remove('hidden');
+    } else {
+        warning.classList.add('hidden');
+    }
+
+    // Animação dos Obstáculos
+    obstacles.forEach(o => {
+        if (o.userData.isNefario) {
+            const time = Date.now() * 0.002 + o.userData.offset;
+            o.position.x = o.userData.baseX + Math.sin(time) * 2.5;
+            o.rotation.y = Math.sin(time * 5) * 0.3;
+            o.position.y = 1.2 + Math.abs(Math.sin(time * 10)) * 0.2;
+        }
+        if (o.userData.isFartGun) {
+            const time = Date.now() * 0.01;
+            // Vibrar o barril
+            o.userData.barrel.position.y = Math.sin(time * 5) * 0.05;
+            o.userData.barrel.rotation.z = Math.PI / 2 + Math.sin(time * 10) * 0.05;
+            // Pulsar fumaça
+            o.userData.smokeGroup.children.forEach((s, idx) => {
+                s.scale.setScalar(1 + Math.sin(time * 2 + idx) * 0.2);
+            });
+
+            // Animação das Chamas do Jetpack
+            if (activePowerup === 'rocket' && player.jetpack) {
+                player.jetpack.children.forEach(child => {
+                    if (child.geometry.type === 'ConeGeometry') {
+                        child.scale.set(1, 1 + Math.sin(Date.now() * 0.05) * 0.2, 1);
+                    }
+                });
+            }
+        }
+    });
+
+    // Partículas
+    if (Math.random() < 0.3) createDust();
+    particles.forEach((p, i) => {
+        p.mesh.position.add(p.vel);
+        p.life -= 0.02;
+        p.mesh.material.opacity = p.life;
+        p.mesh.scale.setScalar(p.life);
+        if (p.life <= 0) {
+            scene.remove(p.mesh);
+            particles.splice(i, 1);
+        }
+    });
+
+    // Taxa de Spawn aumenta com a velocidade
+    const spawnChance = 0.04 + (speed * 0.1);
+    if (Math.random() < Math.min(spawnChance, 0.15)) spawnItem();
 }
 
 function handlePhysics() {
@@ -209,17 +663,24 @@ function handleItems() {
         if (s.position.z > 20) s.position.z -= 200;
     });
 
-    // Moedas
+    // Moedas (Bananas)
     coins.forEach((c, i) => {
         c.position.z += speed;
         c.rotation.y += 0.05;
 
-        // Magnetismo
-        if (activePowerup === 'magnet' && c.position.distanceTo(player.position) < 8) {
-            c.position.lerp(player.position, 0.1);
+        // Distância até o player (considerando o centro do corpo)
+        const playerPos = player.position.clone();
+        playerPos.y += 0.7; // Ajuste para o centro do Minion
+        const dist = c.position.distanceTo(playerPos);
+
+        // Magnetismo Ativo (Apenas com o Power-up Magnet)
+        if (activePowerup === 'magnet' && dist < 8) {
+            c.position.lerp(playerPos, 0.2);
         }
 
-        if (c.position.distanceTo(player.position) < 1) {
+        // Coleta Direta (Raio 1.2)
+        if (dist < 1.2) {
+            sounds.collect();
             score += 100;
             scene.remove(c);
             coins.splice(i, 1);
@@ -259,37 +720,100 @@ function handleItems() {
 }
 
 function activatePowerup(type) {
+    sounds.powerup();
     activePowerup = type;
     powerupTimer = POWERUP_DURATION;
     const ui = document.getElementById('powerup-status');
     const name = document.getElementById('powerup-name');
     ui.classList.remove('hidden');
     name.innerText = type.toUpperCase();
+
+    if (type === 'rocket' && player.jetpack) {
+        player.jetpack.visible = true;
+    }
 }
 
 function deactivatePowerup() {
+    if (activePowerup === 'rocket' && player.jetpack) {
+        player.jetpack.visible = false;
+    }
     activePowerup = null;
     document.getElementById('powerup-status').classList.add('hidden');
+}
+
+function jump() {
+    if (!gameActive || isJumping) return;
+    isJumping = true;
+    jumpVelocity = activePowerup === 'superjump' ? 0.4 : 0.22;
+    sounds.jump();
+}
+
+function slide() {
+    if (!gameActive || isSliding) return;
+    isSliding = true;
+    player.scale.y = 0.5;
+    sounds.button();
+    setTimeout(() => { player.scale.y = 1; isSliding = false; }, 600);
 }
 
 function setupControls() {
     window.addEventListener('keydown', (e) => {
         if (!gameActive) return;
-        if (e.key === 'ArrowLeft' || e.key === 'a') currentLane = Math.max(0, currentLane - 1);
-        if (e.key === 'ArrowRight' || e.key === 'd') currentLane = Math.min(2, currentLane + 1);
-        if ((e.key === 'ArrowUp' || e.key === 'w') && !isJumping) {
-            isJumping = true;
-            jumpVelocity = activePowerup === 'superjump' ? 0.4 : 0.22;
+        if (e.key === 'ArrowLeft' || e.key === 'a') {
+            currentLane = Math.max(0, currentLane - 1);
+            sounds.button();
         }
-        if ((e.key === 'ArrowDown' || e.key === 's') && !isSliding) {
-            isSliding = true;
-            player.scale.y = 0.5;
-            setTimeout(() => { player.scale.y = 1; isSliding = false; }, 600);
+        if (e.key === 'ArrowRight' || e.key === 'd') {
+            currentLane = Math.min(2, currentLane + 1);
+            sounds.button();
+        }
+        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') {
+            jump();
+        }
+        if (e.key === 'ArrowDown' || e.key === 's') {
+            slide();
         }
     });
 
-    document.getElementById('start-button').onclick = startGame;
-    document.getElementById('restart-button').onclick = startGame;
+    // Eventos de Skin
+    document.querySelectorAll('.skin-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.skin-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            selectedSkin = btn.dataset.skin;
+            sounds.button();
+
+            // Preview da skin no menu
+            if (!gameActive) {
+                scene.remove(player);
+                createPlayer();
+                player.rotation.y = Math.PI / 4; // Um pouco de lado pra ver melhor
+            }
+        });
+    });
+
+    document.getElementById('start-button').addEventListener('click', () => {
+        startGame();
+        sounds.button();
+    });
+
+    document.getElementById('skins-menu-button').addEventListener('click', () => {
+        const selector = document.getElementById('skin-selector');
+        selector.classList.toggle('hidden-menu');
+        sounds.button();
+    });
+
+    document.getElementById('back-to-menu-button').addEventListener('click', () => {
+        document.getElementById('game-over').classList.add('hidden');
+        document.getElementById('start-menu').classList.remove('hidden');
+        sounds.button();
+    });
+
+    document.getElementById('restart-button').onclick = () => { sounds.button(); startGame(); };
+
+    // Carregar Recorde
+    const high = localStorage.getItem('minion-high-score') || '0';
+    document.getElementById('high-score-value').innerText = high.padStart(5, '0');
 }
 
 function startGame() {
@@ -298,16 +822,28 @@ function startGame() {
     currentLane = 1;
     gameActive = true;
     deactivatePowerup();
+    gru.position.set(0, 0, 7);
     obstacles.forEach(o => scene.remove(o)); obstacles.length = 0;
     coins.forEach(c => scene.remove(c)); coins.length = 0;
+    powerups.forEach(p => scene.remove(p)); powerups.length = 0;
     document.getElementById('start-menu').classList.add('hidden');
     document.getElementById('game-over').classList.add('hidden');
 }
 
 function gameOver() {
+    sounds.hit();
     gameActive = false;
+
+    // Salvar Recorde
+    const currentHigh = parseInt(localStorage.getItem('minion-high-score') || '0');
+    if (score > currentHigh) {
+        localStorage.setItem('minion-high-score', score.toString());
+        document.getElementById('high-score-value').innerText = score.toString().padStart(5, '0');
+    }
+
     document.getElementById('game-over').classList.remove('hidden');
     document.getElementById('final-score-value').innerText = score;
+    document.getElementById('final-best-value').innerText = localStorage.getItem('minion-high-score');
 }
 
 function animate() {

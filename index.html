@@ -18,8 +18,14 @@
         <!-- UI Overlay -->
         <div id="ui-overlay">
             <div id="score-container">
-                <span id="score-label">SCORE</span>
-                <span id="score-value">00000</span>
+                <div class="score-row">
+                    <span id="score-label">SCORE</span>
+                    <span id="score-value">00000</span>
+                </div>
+                <div class="high-score-row">
+                    <span id="high-score-label">BEST:</span>
+                    <span id="high-score-value">00000</span>
+                </div>
             </div>
 
             <div id="speed-meter">
@@ -41,7 +47,21 @@
             <h1>MINION RUSH</h1>
             <h2 class="subtitle">The Nose is Coming!</h2>
             <div class="nose-warning">FUJA DO NARIZ DO GRU!</div>
-            <button id="start-button">INICIAR CORRIDA</button>
+            <div class="menu-buttons">
+                <button id="start-button">INICIAR CORRIDA</button>
+                <button id="skins-menu-button">VESTIÁRIO</button>
+            </div>
+
+            <div id="skin-selector" class="hidden-menu">
+                <h3>ESCOLHA SUA SKIN</h3>
+                <div class="skin-options">
+                    <button class="skin-btn active" data-skin="default">PADRÃO</button>
+                    <button class="skin-btn" data-skin="prisoner">PRISIONEIRO</button>
+                    <button class="skin-btn" data-skin="purple">ROXO</button>
+                    <button class="skin-btn" data-skin="princess">PRINCESA</button>
+                </div>
+            </div>
+
             <div class="controls-hint">
                 <p>Use <b>W A S D</b> ou <b>SETAS</b> para mover, pular e deslizar</p>
             </div>
@@ -50,8 +70,14 @@
         <!-- Game Over -->
         <div id="game-over" class="overlay hidden">
             <h1>GAME OVER</h1>
-            <div class="final-score">PONTUAÇÃO FINAL: <span id="final-score-value">0</span></div>
-            <button id="restart-button">TENTAR NOVAMENTE</button>
+            <div class="final-scores">
+                <div class="final-score">PONTUAÇÃO: <span id="final-score-value">0</span></div>
+                <div class="best-score">RECORDE: <span id="final-best-value">0</span></div>
+            </div>
+            <div class="menu-buttons">
+                <button id="restart-button">TENTAR NOVAMENTE</button>
+                <button id="back-to-menu-button">MENU</button>
+            </div>
         </div>
     </div>
     <script type="module" src="./main.js"></script>
