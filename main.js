@@ -5,8 +5,25 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x020617);
 scene.fog = new THREE.Fog(0x020617, 10, 80);
 
+// --- CARREGAMENTO DE TEXTURAS ---
+const textureLoader = new THREE.TextureLoader();
+const textures = {
+    body: textureLoader.load('assets/body.png'),
+    suit: textureLoader.load('assets/suit.png'),
+    floor: textureLoader.load('assets/floor.png'),
+    banana: textureLoader.load('assets/banana.png'),
+    building: textureLoader.load('assets/building.png'),
+    barrier: textureLoader.load('assets/barrier.png')
+};
+
+// Ajuste para repetição infinita no chão e prédios
+textures.floor.wrapS = textures.floor.wrapT = THREE.RepeatWrapping;
+textures.floor.repeat.set(1, 4);
+textures.building.wrapS = textures.building.wrapT = THREE.RepeatWrapping;
+textures.building.repeat.set(1, 2);
+
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 4, 8);
+camera.position.set(0, 5, 12);
 camera.lookAt(0, 1, -5);
 
 const renderer = new THREE.WebGLRenderer({
@@ -65,6 +82,7 @@ const coins = [];
 const powerups = [];
 const floorSegments = [];
 const particles = [];
+let playerHeroLight;
 
 // --- INICIALIZAÇÃO ---
 function init() {
@@ -78,9 +96,15 @@ function init() {
 
 function createLights() {
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
     dirLight.position.set(5, 10, 5);
     scene.add(dirLight);
+
+    // Luz de acompanhamento (Hero Light)
+    const heroLight = new THREE.PointLight(0x3b82f6, 1, 10);
+    heroLight.position.set(0, 2, 0);
+    scene.add(heroLight);
+    playerHeroLight = heroLight; // Necessário declarar no topo ou usar global
 }
 
 function createPlayer() {
@@ -108,7 +132,11 @@ function createPlayer() {
 
     // Corpo
     const bodyGeo = new THREE.CapsuleGeometry(0.35, 0.7, 4, 16);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.4 });
+    const bodyMat = new THREE.MeshStandardMaterial({
+        map: textures.body,
+        color: bodyColor,
+        roughness: 0.4
+    });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.y = 0.7;
     group.add(body);
@@ -125,10 +153,29 @@ function createPlayer() {
     } else {
         const suit = new THREE.Mesh(
             new THREE.CylinderGeometry(0.36, 0.36, 0.35, 16),
-            new THREE.MeshStandardMaterial({ color: suitColor })
+            new THREE.MeshStandardMaterial({
+                map: textures.suit,
+                color: suitColor
+            })
         );
         suit.position.y = 0.45;
         group.add(suit);
+
+        // Alças do Macacão
+        const strapGeo = new THREE.BoxGeometry(0.1, 0.5, 0.05);
+        const strapMat = new THREE.MeshStandardMaterial({ map: textures.suit, color: suitColor });
+        for (let i of [-1, 1]) {
+            const strap = new THREE.Mesh(strapGeo, strapMat);
+            strap.position.set(i * 0.25, 0.7, 0);
+            strap.rotation.x = -0.5;
+            strap.rotation.z = i * 0.3;
+            group.add(strap);
+
+            // Botões
+            const button = new THREE.Mesh(new THREE.CircleGeometry(0.04, 8), new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8 }));
+            button.position.set(i * 0.22, 0.58, 0.36);
+            group.add(button);
+        }
     }
 
     if (!isPurple && !isPrisoner && !isPrincess) {
@@ -141,7 +188,12 @@ function createPlayer() {
     const frameColor = isPurple ? 0x444444 : 0x888888;
     const goggleFrame = new THREE.Mesh(
         new THREE.TorusGeometry(0.18, 0.05, 12, 32),
-        new THREE.MeshStandardMaterial({ color: frameColor, metalness: 0.8, roughness: 0.2 })
+        new THREE.MeshStandardMaterial({
+            color: frameColor,
+            metalness: 1.0,
+            roughness: 0.1,
+            envMapIntensity: 1
+        })
     );
     goggleFrame.position.set(0, 0.85, 0.28);
     group.add(goggleFrame);
@@ -154,11 +206,18 @@ function createPlayer() {
     group.add(eye);
 
     const pupil = new THREE.Mesh(
-        new THREE.SphereGeometry(0.04, 8, 8),
+        new THREE.SphereGeometry(0.05, 8, 8),
         new THREE.MeshStandardMaterial({ color: 0x000000 })
     );
     pupil.position.set(0, 0.85, 0.42);
     group.add(pupil);
+
+    const shine = new THREE.Mesh(
+        new THREE.SphereGeometry(0.02, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff })
+    );
+    shine.position.set(0.03, 0.88, 0.45);
+    group.add(shine);
 
     const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 20), new THREE.MeshStandardMaterial({ color: 0x111111 }));
     strap.rotation.x = Math.PI / 2;
@@ -200,17 +259,53 @@ function createPlayer() {
 
     // Acessórios de Skin
     if (isPrincess) {
-        // Coroa
-        const crownBase = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.05, 8, 16), new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1 }));
-        crownBase.rotation.x = Math.PI / 2;
+        // Coroa Refinada (Tiara)
+        const crownGroup = new THREE.Group();
+        const crownBase = new THREE.Mesh(
+            new THREE.TorusGeometry(0.18, 0.03, 8, 32, Math.PI),
+            new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1, roughness: 0.1 })
+        );
+        crownBase.rotation.x = -Math.PI / 2;
         crownBase.position.y = 1.15;
-        group.add(crownBase);
-        for (let i = 0; i < 5; i++) {
-            const point = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.15, 4), new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1 }));
-            const angle = (i / 5) * Math.PI * 2;
-            point.position.set(Math.cos(angle) * 0.2, 1.2, Math.sin(angle) * 0.2);
-            group.add(point);
+        crownGroup.add(crownBase);
+
+        // Joia na Coroa
+        const gem = new THREE.Mesh(
+            new THREE.OctahedronGeometry(0.06),
+            new THREE.MeshStandardMaterial({ color: 0xec4899, emissive: 0xec4899, emissiveIntensity: 0.5 })
+        );
+        gem.position.set(0, 1.25, 0.15);
+        crownGroup.add(gem);
+
+        for (let i = -1; i <= 1; i++) {
+            const point = new THREE.Mesh(
+                new THREE.ConeGeometry(0.04, 0.15, 4),
+                new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 1 })
+            );
+            point.position.set(i * 0.12, 1.22, 0.1);
+            point.rotation.x = 0.2;
+            crownGroup.add(point);
         }
+        group.add(crownGroup);
+
+        // Tutu (Saia de Bailarina)
+        const tutuGeo = new THREE.CylinderGeometry(0.45, 0.65, 0.15, 20);
+        const tutuMat = new THREE.MeshStandardMaterial({
+            color: 0xf472b6,
+            transparent: true,
+            opacity: 0.8,
+            roughness: 0.9
+        });
+        const tutu = new THREE.Mesh(tutuGeo, tutuMat);
+        tutu.position.y = 0.4;
+        group.add(tutu);
+
+        // Detalhe de babado no tutu
+        const ruffleGeo = new THREE.TorusGeometry(0.55, 0.05, 8, 32);
+        const ruffle = new THREE.Mesh(ruffleGeo, tutuMat);
+        ruffle.rotation.x = Math.PI / 2;
+        ruffle.position.y = 0.35;
+        group.add(ruffle);
     }
 
     // Braços
@@ -245,7 +340,7 @@ function createPlayer() {
 
     // Jetpack (Invisível por padrão)
     const jetpackGroup = new THREE.Group();
-    const jpBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8 }));
+    const jpBody = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 1.0, roughness: 0.1 }));
     jpBody.position.set(0, 0.6, -0.3);
     jetpackGroup.add(jpBody);
 
@@ -276,61 +371,120 @@ function createPlayer() {
 
 function createGru() {
     const group = new THREE.Group();
+    group.scale.set(0.6, 0.6, 0.6); // Gru menor conforme solicitado
 
-    // Escala geral menor para o Gru
-    group.scale.set(0.75, 0.75, 0.75);
-
-    // Sobretudo com Gola
-    const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.5, 0.85, 3, 16),
-        new THREE.MeshStandardMaterial({ color: 0x0f172a })
-    );
-    body.position.y = 1.5;
+    // Tronco (Hunched & Top-Heavy)
+    const bodyGeometry = new THREE.SphereGeometry(1.2, 16, 16);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8 });
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.scale.set(1.4, 1.9, 0.85);
+    body.position.y = 2.2;
+    body.rotation.x = -0.15; // Inclinado para frente (em direção ao player)
     group.add(body);
 
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.5, 0.4, 16), new THREE.MeshStandardMaterial({ color: 0x0f172a }));
-    collar.position.y = 2.8;
+    // Gola Alta do Sobretudo
+    const collar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.6, 0.8, 0.7, 16),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a })
+    );
+    collar.position.y = 3.6;
+    collar.rotation.x = -0.1;
     group.add(collar);
 
-    // Cachecol Listrado Refinado
-    const scarf = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.56, 0.56, 0.35, 16),
-        new THREE.MeshStandardMaterial({ color: 0x334155 })
-    );
-    scarf.position.y = 2.7;
-    group.add(scarf);
-
-    for (let i = 0; i < 4; i++) {
-        const stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.57, 0.57, 0.05), new THREE.MeshStandardMaterial({ color: 0x64748b }));
-        stripe.position.y = 2.6 + i * 0.08;
-        group.add(stripe);
+    // Cachecol Volumoso (Anéis)
+    const scarfGroup = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+        const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(0.5, 0.12, 8, 16),
+            new THREE.MeshStandardMaterial({ color: i % 2 === 0 ? 0x222222 : 0x444444 })
+        );
+        ring.rotation.x = Math.PI / 2 - 0.1;
+        ring.position.y = 3.5 + i * 0.12;
+        ring.position.z = -0.05;
+        scarfGroup.add(ring);
     }
+    group.add(scarfGroup);
 
-    // Cabeça Oval
+    // Cabeça (Forma de Ovo/Oval)
     const head = new THREE.Mesh(
-        new THREE.SphereGeometry(0.42, 16, 20),
+        new THREE.SphereGeometry(0.45, 16, 16),
         new THREE.MeshStandardMaterial({ color: 0xccaa99 })
     );
-    head.scale.y = 1.2;
-    head.position.y = 3.2;
+    head.scale.set(1, 1.4, 0.9);
+    head.position.y = 4.0;
+    head.position.z = -0.1;
     group.add(head);
 
-    // Nariz Grande e Fino
-    const nose = new THREE.Mesh(
-        new THREE.ConeGeometry(0.12, 10, 16),
-        new THREE.MeshStandardMaterial({ color: 0xccaa99 })
-    );
-    nose.rotation.x = Math.PI / 2;
-    nose.position.set(0, 3.2, -5);
+    // Nariz Icônico (Voltado para o Player)
+    const noseGeo = new THREE.ConeGeometry(0.12, 1.2, 8);
+    const nose = new THREE.Mesh(noseGeo, new THREE.MeshStandardMaterial({ color: 0xccaa99 }));
+    nose.rotation.x = Math.PI / 2; // Aponta para frente (-Z)
+    nose.position.set(0, 4.0, -0.7);
     gruNose = nose;
     group.add(nose);
 
-    // Braços Longos
-    const armGeo = new THREE.CylinderGeometry(0.08, 0.12, 1.8);
-    const lA = new THREE.Mesh(armGeo, new THREE.MeshStandardMaterial({ color: 0x0f172a }));
-    lA.position.set(-0.7, 2, 0.2); lA.rotation.z = 0.3; group.add(lA);
-    const rA = new THREE.Mesh(armGeo, new THREE.MeshStandardMaterial({ color: 0x0f172a }));
-    rA.position.set(0.7, 2, 0.2); rA.rotation.z = -0.3; group.add(rA);
+    // Olhos e Sobrancelhas
+    const eyeGeo = new THREE.SphereGeometry(0.05, 8, 8);
+    const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff });
+    const pupilMat = new THREE.MeshStandardMaterial({ color: 0x000000 });
+
+    for (let i of [-1, 1]) {
+        const eye = new THREE.Mesh(eyeGeo, eyeMat);
+        eye.position.set(i * 0.18, 4.1, -0.4);
+        group.add(eye);
+
+        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.03, 4, 4), pupilMat);
+        pupil.position.set(i * 0.18, 4.1, -0.46);
+        group.add(pupil);
+
+        // Sobrancelhas Anguladas (Expressão Malvada)
+        const brow = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.04, 0.02), pupilMat);
+        brow.position.set(i * 0.2, 4.25, -0.45);
+        brow.rotation.z = i * 0.45;
+        group.add(brow);
+
+        // Orelhas
+        const ear = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), new THREE.MeshStandardMaterial({ color: 0xccaa99 }));
+        ear.position.set(i * 0.45, 4.0, -0.1);
+        ear.scale.set(0.5, 1, 1);
+        group.add(ear);
+    }
+
+    // Braços Longos e Finos
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+    const armGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.2);
+
+    const leftArm = new THREE.Mesh(armGeo, armMat);
+    leftArm.position.set(-0.9, 2.4, 0);
+    leftArm.rotation.z = 0.5;
+    group.add(leftArm);
+
+    const rightArm = new THREE.Mesh(armGeo, armMat);
+    rightArm.position.set(0.9, 2.4, 0);
+    rightArm.rotation.z = -0.5;
+    group.add(rightArm);
+
+    // Mãos/Luvas Pretas
+    const handGeo = new THREE.SphereGeometry(0.12, 8, 8);
+    const handMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const lHand = new THREE.Mesh(handGeo, handMat);
+    lHand.position.set(-1.45, 1.4, 0);
+    group.add(lHand);
+    const rHand = new THREE.Mesh(handGeo, handMat);
+    rHand.position.set(1.45, 1.4, 0);
+    group.add(rHand);
+
+    // Pernas Muito Finas (O clássico do Gru)
+    const legGeo = new THREE.CylinderGeometry(0.05, 0.04, 1.2);
+    for (let i of [-1, 1]) {
+        const leg = new THREE.Mesh(legGeo, armMat);
+        leg.position.set(i * 0.2, 0.6, 0);
+        group.add(leg);
+
+        const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.1, 0.3), handMat);
+        shoe.position.set(i * 0.2, 0.1, 0.1);
+        group.add(shoe);
+    }
 
     gru = group;
     gru.position.set(0, 0, 7);
@@ -347,7 +501,11 @@ function addFloorSegment(z) {
     // Pista (Asfalto Tech)
     const seg = new THREE.Mesh(
         new THREE.PlaneGeometry(10, 20),
-        new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.8 })
+        new THREE.MeshStandardMaterial({
+            map: textures.floor,
+            color: 0x888888,
+            roughness: 0.8
+        })
     );
     seg.rotation.x = -Math.PI / 2;
     group.add(seg);
@@ -361,7 +519,10 @@ function addFloorSegment(z) {
         for (let j = 0; j < 2; j++) {
             const h = 5 + Math.random() * 20;
             const buildGeo = new THREE.BoxGeometry(4, h, 8);
-            const buildMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+            const buildMat = new THREE.MeshStandardMaterial({
+                map: textures.building,
+                color: 0x1e293b
+            });
             const build = new THREE.Mesh(buildGeo, buildMat);
             build.position.set(side * 8, h / 2, (j - 0.5) * 10);
             group.add(build);
@@ -410,10 +571,9 @@ function spawnItem() {
         }
         const curve = new THREE.CatmullRomCurve3(points);
 
-        // TubeGeometry cria um corpo contínuo com "quinas" (6 lados) como uma banana real
-        const geometry = new THREE.TubeGeometry(curve, 12, 0.09, 6, false);
         const material = new THREE.MeshStandardMaterial({
-            color: 0xffe135,
+            map: textures.banana,
+            color: 0xffffff,
             roughness: 0.4,
             metalness: 0.1
         });
@@ -449,7 +609,12 @@ function spawnItem() {
         if (subRand < 0.4) { // Barreira de Alerta
             type = 'low';
             const base = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.2, 0.5), new THREE.MeshStandardMaterial({ color: 0x334155 }));
-            const sign = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.8, 0.1), new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.5 }));
+            const sign = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.8, 0.1), new THREE.MeshStandardMaterial({
+                map: textures.barrier,
+                color: 0xffffff,
+                emissive: 0xef4444,
+                emissiveIntensity: 0.2
+            }));
             sign.position.y = 0.5;
             obsGroup.add(base, sign);
             obsGroup.position.y = 0.1;
@@ -468,21 +633,37 @@ function spawnItem() {
             }
             obsGroup.add(smokeGroup);
             obsGroup.add(barrel);
-            obsGroup.position.y = 0.5;
+
+            // Detalhes da Arma
+            const nozzle = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.05, 8, 16), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9 }));
+            nozzle.rotation.y = Math.PI / 2;
+            nozzle.position.x = 0.9;
+            obsGroup.add(nozzle);
+
+            const handle = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.6, 0.2), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            handle.position.set(-0.5, -0.6, 0);
+            obsGroup.add(handle);
+
+            obsGroup.position.y = 0.8;
             obsGroup.userData.isFartGun = true;
             obsGroup.userData.smokeGroup = smokeGroup;
             obsGroup.userData.barrel = barrel;
         } else { // Dr. Nefário com Super Scooter
             type = 'high';
-            const scooter = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.85, 0.4, 16), new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7 }));
+            const scooter = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.5, 32), new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.8, roughness: 0.2 }));
             scooter.position.y = -0.5;
-            const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.2), new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x60a5fa }));
-            thruster.position.y = -0.2; scooter.add(thruster);
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.05, 8, 32), new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x60a5fa, emissiveIntensity: 2 }));
+            ring.rotation.x = Math.PI / 2;
+            ring.position.y = -0.3;
+            scooter.add(ring);
 
-            const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5), new THREE.MeshStandardMaterial({ color: 0xf8fafc }));
+            const thruster = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 0.3), new THREE.MeshStandardMaterial({ color: 0x60a5fa, emissive: 0x60a5fa, emissiveIntensity: 5 }));
+            thruster.position.y = -0.4; scooter.add(thruster);
+
+            const coat = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5), new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.8 }));
             const head = new THREE.Mesh(new THREE.SphereGeometry(0.35), new THREE.MeshStandardMaterial({ color: 0xddbb99 }));
             head.position.y = 1.0;
-            const glasses = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+            const glasses = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.05, 12), new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 1 }));
             glasses.position.set(0, 1.0, 0.25);
 
             obsGroup.add(scooter, coat, head, glasses);
@@ -517,7 +698,7 @@ function spawnItem() {
         }
 
         puGroup.add(model);
-        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.2 }));
+        const glow = new THREE.Mesh(new THREE.SphereGeometry(0.6), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, emissive: 0xffffff, emissiveIntensity: 0.5 }));
         puGroup.add(glow);
 
         puGroup.position.set(lane, 0.8, -80);
@@ -573,10 +754,32 @@ function update() {
         }
     }
 
-    // Gru perseguindo (Agora bem perto!)
-    const gruTargetZ = 7 + (Math.sin(Date.now() * 0.002) * 0.8);
+    // Movimento da Luz de Acompanhamento
+    if (playerHeroLight && player) {
+        playerHeroLight.position.x = player.position.x;
+        playerHeroLight.position.y = player.position.y + 2.5;
+        playerHeroLight.position.z = player.position.z + 1;
+    }
+
+    // Gru perseguindo (Distância maior para melhor visibilidade)
+    const timeGru = Date.now() * 0.002;
+    const gruTargetZ = 8.5 + (Math.sin(timeGru) * 0.8);
     gru.position.z = THREE.MathUtils.lerp(gru.position.z, gruTargetZ, 0.02);
-    gruNose.scale.set(1 + Math.sin(Date.now() * 0.01) * 0.1, 1, 1);
+
+    // Animar nariz Pulsante (Escalar nos eixos da base)
+    const noseScale = 1 + Math.sin(Date.now() * 0.01) * 0.15;
+    gruNose.scale.set(noseScale, 1, noseScale);
+
+    // Animação dos Braços do Gru (Movimento de Garra/Agarrar)
+    if (gru.children) {
+        gru.children.forEach(child => {
+            if (child.geometry && child.geometry.type === 'CylinderGeometry' && child.position.y > 2) {
+                // Identificar braços pela posição X
+                if (child.position.x < 0) child.rotation.z = 0.5 + Math.sin(timeGru * 2) * 0.2;
+                if (child.position.x > 0) child.rotation.z = -0.5 - Math.sin(timeGru * 2) * 0.2;
+            }
+        });
+    }
 
     // Aviso do Nariz (Ativo se estiver quase tocando)
     const warning = document.getElementById('warning-message');
@@ -585,6 +788,10 @@ function update() {
     } else {
         warning.classList.add('hidden');
     }
+
+    // Rotação quando está com foguete (Jetpack)
+    const targetRotation = activePowerup === 'rocket' ? Math.PI : 0;
+    player.rotation.y = THREE.MathUtils.lerp(player.rotation.y, targetRotation, 0.1);
 
     // Animação dos Obstáculos
     obstacles.forEach(o => {
