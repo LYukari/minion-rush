@@ -86,12 +86,14 @@ let playerHeroLight;
 
 // --- INICIALIZAÇÃO ---
 function init() {
+    console.log("Minion Rush: Initializing game...");
     createLights();
     createPlayer();
     createGru();
     createEnvironment();
     setupControls();
     animate();
+    console.log("Minion Rush: Game initialized and ready!");
 }
 
 function createLights() {
